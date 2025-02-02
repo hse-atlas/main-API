@@ -1,33 +1,65 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, status
+from pydantic import BaseModel
 
 app = FastAPI()
 
 
-# Главная страница
-@app.get("/")
-def read_root():
-    return {"message": "Добро пожаловать в мой REST API"}
+# Модель для входящих данных при создании и редактировании проекта
+class Project(BaseModel):
+    name: str
+    description: str
 
 
-# Получение данных о пользователе
-@app.get("/users/{user_id}")
-def read_user(user_id: int):
-    return {"user_id": user_id, "name": f"User {user_id}"}
+# Модель для ответа, включающая идентификатор проекта
+class ProjectResponse(Project):
+    id: int
 
 
-# Создание нового пользователя
-@app.post("/users/")
-def create_user(name: str):
-    return {"message": f"Пользователь {name} создан"}
+# Простое хранилище для проектов (словарь). В будущем надо подключить бд.
+projects_db = {}
+next_id = 1
 
 
-# Обновление данных пользователя
-@app.put("/users/{user_id}")
-def update_user(user_id: int, name: str):
-    return {"message": f"Пользователь {user_id} теперь {name}"}
+@app.post("/projects", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
+def create_project(project: Project):
+    """
+    Создание нового проекта.
+    Ожидается JSON:
+    {
+        "name": "Название проекта",
+        "description": "Описание проекта"
+    }
+    """
+    global next_id
+    new_project = project.dict()
+    new_project["id"] = next_id
+    projects_db[next_id] = new_project
+    next_id += 1
+    return new_project
 
 
-# Удаление пользователя
-@app.delete("/users/{user_id}")
-def delete_user(user_id: int):
-    return {"message": f"Пользователь {user_id} удален"}
+@app.put("/projects/{project_id}", response_model=ProjectResponse)
+def update_project(project_id: int, project: Project):
+    """
+    Редактирование существующего проекта.
+    Принимает JSON с новыми данными и идентификатор проекта в URL.
+    """
+    if project_id not in projects_db:
+        raise HTTPException(status_code=404, detail="Проект не найден")
+
+    updated_project = project.dict()
+    updated_project["id"] = project_id
+    projects_db[project_id] = updated_project
+    return updated_project
+
+
+@app.delete("/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_project(project_id: int):
+    """
+    Удаление проекта по его идентификатору.
+    """
+    if project_id not in projects_db:
+        raise HTTPException(status_code=404, detail="Проект не найден")
+
+    del projects_db[project_id]
+    return None
