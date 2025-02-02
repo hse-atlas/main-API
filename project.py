@@ -10,9 +10,11 @@ class Project(BaseModel):
     description: str
 
 
-# Модель для ответа, включающая идентификатор проекта
-class ProjectResponse(Project):
+# Модель для ответа, где id располагается первым
+class ProjectResponse(BaseModel):
     id: int
+    name: str
+    description: str
 
 
 # Простое хранилище для проектов (словарь). В будущем надо подключить бд.
