@@ -1,2 +1,6 @@
-fastapi
+fastapi~=0.115.6
 uvicorn
+pydantic~=2.9.2
+SQLAlchemy~=2.0.37
+"pydantic[email]"
+psycopg2-binary
