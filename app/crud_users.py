@@ -6,8 +6,19 @@ from sqlalchemy.orm import Session
 
 from app.create_db import User, Project, SessionLocal
 
+from fastapi.middleware.cors import CORSMiddleware
+
+
 app = FastAPI(title="API для управления пользователями", debug=True)
 
+# Разрешаем запросы с фронтенда
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Разрешаем все домены (можно указать конкретные)
+    allow_credentials=True,
+    allow_methods=["*"],  # Разрешаем все методы (GET, POST, PUT, DELETE)
+    allow_headers=["*"],  # Разрешаем все заголовки
+)
 
 # ---------------------------
 # Pydantic-схемы для пользователя
