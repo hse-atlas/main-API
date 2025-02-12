@@ -77,6 +77,13 @@ class UserOut(UserBase):
         from_attributes = True
 
 
+class UsersProjectOut(BaseModel):
+    project_id: int
+    project_name: str
+    project_description: str
+    users: List[UserOut]
+
+
 # ----------------------------------------------------------------------------
 # Зависимость для получения сессии БД
 # ----------------------------------------------------------------------------
@@ -206,15 +213,18 @@ def get_user(user_id: int, db: Session = Depends(get_db)):
     return db_user
 
 
-@app.get("/users/project/{project_id}", response_model=List[UserOut])
+@app.get("/users/project/{project_id}", response_model=UsersProjectOut)
 def get_users_by_project(project_id: int, db: Session = Depends(get_db)):
-    """
-    Возвращает список пользователей, привязанных к конкретному проекту по project_id.
-    """
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Проект не найден")
     users = db.query(User).filter(User.project_id == project_id).all()
-    if not users:
-        raise HTTPException(status_code=404, detail="Пользователи для данного проекта не найдены")
-    return users
+    return UsersProjectOut(
+        project_id=project.id,
+        project_name=project.name,
+        project_description=project.description,
+        users=users
+    )
 
 
 @app.put("/users/{user_id}", response_model=UserOut)
