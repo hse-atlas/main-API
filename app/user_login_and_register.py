@@ -10,7 +10,9 @@ from pydantic_settings import BaseSettings
 from sqlalchemy.orm import Session
 
 # Импортируем объекты из create_db.py
-from create_db import SessionLocal, User
+from app.create_db import SessionLocal, User
+
+from fastapi.middleware.cors import CORSMiddleware
 
 
 # ------------------------------------------------------------------------------
@@ -152,6 +154,19 @@ def user_login(
 # ------------------------------------------------------------------------------
 app = FastAPI(debug=True)
 
+# Разрешаем CORS
+origins = [
+    "http://localhost:3000",  # Разрешаем доступ с фронтенда
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,  # Разрешаем доступ только с этих адресов
+    allow_credentials=True,
+    allow_methods=["*"],  # Разрешаем все методы
+    allow_headers=["*"],  # Разрешаем все заголовки
+)
+
 
 @app.get("/")
 def home_page():
@@ -164,4 +179,4 @@ app.include_router(router)
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("user_login_and_register:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("user_login_and_register:app", host="127.0.0.1", port=9000, reload=True)

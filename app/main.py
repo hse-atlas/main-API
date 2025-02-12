@@ -2,25 +2,29 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from pydantic import BaseModel
 from typing import Optional, List
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 from fastapi.middleware.cors import CORSMiddleware
 
 # Импорт моделей и сессии из вашего модуля create_db
 from app.create_db import Project, User, SessionLocal
 
-
 # ----------------------------------------------------------------------------
 # Создаем единый экземпляр приложения FastAPI
 # ----------------------------------------------------------------------------
 app = FastAPI(title="API для управления проектами и пользователями", debug=True)
 
-# Настраиваем CORS (из второго файла)
+# Разрешаем CORS
+origins = [
+    "http://localhost:3000",  # Разрешаем доступ с фронтенда
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],    # Разрешаем все домены
+    allow_origins=origins,  # Разрешаем доступ только с этих адресов
     allow_credentials=True,
-    allow_methods=["*"],    # Разрешаем все методы (GET, POST, PUT, DELETE и т.д.)
-    allow_headers=["*"],    # Разрешаем все заголовки
+    allow_methods=["*"],  # Разрешаем все методы
+    allow_headers=["*"],  # Разрешаем все заголовки
 )
 
 
@@ -31,10 +35,13 @@ class ProjectBase(BaseModel):
     name: str
     description: str
     owner_id: int
+    user_count: int
 
 
-class ProjectCreate(ProjectBase):
-    pass
+class ProjectCreate(BaseModel):
+    name: str
+    description: str
+    owner_id: int
 
 
 class ProjectUpdate(BaseModel):
@@ -43,8 +50,26 @@ class ProjectUpdate(BaseModel):
     description: Optional[str] = None
 
 
-class ProjectOut(ProjectBase):
+class ProjectOut(BaseModel):
     id: int
+    name: str
+    description: str
+    owner_id: int
+    user_count: Optional[int] = None  # Сделать необязательным
+
+
+class UserResponse(BaseModel):
+    id: int
+    login: str
+    email: str
+
+
+class ProjectDetailResponse(BaseModel):
+    id: int
+    name: str
+    description: str
+    owner_id: int
+    users: list[UserResponse]
 
     class Config:
         from_attributes = True
@@ -121,8 +146,8 @@ def create_project(project: ProjectCreate, db: Session = Depends(get_db)):
     return db_project
 
 
-@app.put("/projects/owner/{owner_id}", response_model=ProjectOut)
-def update_project(owner_id: int, project: ProjectUpdate, db: Session = Depends(get_db)):
+@app.put("/projects/owner/{project_id}", response_model=ProjectOut)
+def update_project(project_id: int, owner_id: int, project: ProjectUpdate, db: Session = Depends(get_db)):
     """
     Обновляет проект.
     В JSON можно передать поля:
@@ -131,10 +156,15 @@ def update_project(owner_id: int, project: ProjectUpdate, db: Session = Depends(
         "description": "Новое описание проекта"
     }
     """
-    db_project = db.query(Project).filter(Project.owner_id == owner_id).first()
+    db_project = db.query(Project).filter(Project.id == project_id).first()
     if not db_project:
         raise HTTPException(status_code=404, detail="Проект не найден")
 
+    # Проверка прав пользователя
+    if db_project.owner_id != owner_id:
+        raise HTTPException(status_code=403, detail="Нет прав для изменения этого проекта")
+
+    # Обновление данных проекта, если они были переданы
     if project.name is not None:
         db_project.name = project.name
     if project.description is not None:
@@ -145,34 +175,99 @@ def update_project(owner_id: int, project: ProjectUpdate, db: Session = Depends(
     return db_project
 
 
-@app.delete("/projects/owner/{owner_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_project(owner_id: int, db: Session = Depends(get_db)):
+@app.delete("/projects/owner/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_project(project_id: int, owner_id: int, db: Session = Depends(get_db)):
     """
-    Удаляет проект, найденный по owner_id.
+    Удаляет проект, если запрос исходит от его владельца.
     """
-    db_project = db.query(Project).filter(Project.owner_id == owner_id).first()
+    db_project = db.query(Project).filter(Project.id == project_id).first()
+
     if not db_project:
         raise HTTPException(status_code=404, detail="Проект не найден")
+
+    if db_project.owner_id != owner_id:
+        raise HTTPException(status_code=403, detail="Нет прав для удаления этого проекта")
+
     db.delete(db_project)
     db.commit()
-    # При статусе 204 тело ответа не возвращается
-    return
 
 
 @app.get("/projects/owner/{owner_id}", response_model=List[ProjectOut])
 def list_projects(owner_id: int, db: Session = Depends(get_db)):
     """
-    Возвращает список всех проектов, принадлежащих администратору с заданным owner_id.
+    Возвращает список всех проектов админа с количеством пользователей.
     """
-    projects = db.query(Project).filter(Project.owner_id == owner_id).all()
+    projects = (
+        db.query(
+            Project.id,
+            Project.name,
+            Project.description,
+            Project.owner_id,
+            func.count(User.id).label("user_count"),
+        )
+        .outerjoin(User, User.project_id == Project.id)
+        .filter(Project.owner_id == owner_id)
+        .group_by(Project.id)
+        .all()
+    )
+
     if not projects:
         raise HTTPException(status_code=404, detail="Проекты не найдены")
-    return projects
+
+    # Преобразуем результат в список словарей
+    return [
+        {"id": p.id, "name": p.name, "description": p.description, "owner_id": p.owner_id, "user_count": p.user_count}
+        for p in projects
+    ]
+
+
+@app.get("/projects/{project_id}", response_model=ProjectDetailResponse)
+def get_project_details(project_id: int, owner_id: int, db: Session = Depends(get_db)):
+    """
+    Получение деталей проекта с проверкой владельца и списка пользователей.
+    """
+    # Проверяем, существует ли проект и принадлежит ли он owner_id
+    project = (
+        db.query(
+            Project.id,
+            Project.name,
+            Project.description,
+            Project.owner_id,
+            func.count(User.id).label("user_count"),
+        )
+        .outerjoin(User, User.project_id == Project.id)
+        .filter(Project.id == project_id, Project.owner_id == owner_id)
+        .group_by(Project.id)
+        .first()
+    )
+
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Проект не найден или доступ запрещён"
+        )
+
+    # Получаем всех пользователей проекта
+    users = db.query(User).filter(User.project_id == project_id).all()
+
+    # Преобразуем пользователей в список моделей UserResponse
+    user_responses = [UserResponse(id=user.id, login=user.login, email=user.email) for user in users]
+
+    return ProjectDetailResponse(
+        id=project.id,
+        name=project.name,
+        description=project.description,
+        owner_id=project.owner_id,
+        user_count=project.user_count,  # Если пользователей нет, будет 0
+        users=user_responses
+    )
 
 
 # ----------------------------------------------------------------------------
 # Эндпоинты CRUD для пользователей (из второго файла)
 # ----------------------------------------------------------------------------
+
+# не нужен так как есть login и register
 
 @app.post("/users/", response_model=UserOut, status_code=status.HTTP_201_CREATED)
 def create_user(user: UserCreate, db: Session = Depends(get_db)):
@@ -268,4 +363,5 @@ def delete_user(user_id: int, db: Session = Depends(get_db)):
 # ----------------------------------------------------------------------------
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+
+    uvicorn.run("main:app", host="127.0.0.1", port=90, reload=True)
